@@ -1,5 +1,4 @@
 # CECILE
-
 # 🛡️ Suricata Guard — Installation Manuelle (Détection + Blocage)
 
 > Déploiement manuel de Suricata avec règles personnalisées, blocage automatique via iptables et Fail2ban.
@@ -99,9 +98,18 @@ outputs:
 
 ### 2.4 Copier les règles personnalisées
 
+> ⚠️ **Suricata 7+ (et 8.x) cherche les règles dans `/var/lib/suricata/rules/` par défaut — PAS dans `/etc/suricata/rules/`.
+> C'est ce chemin qu'il faut utiliser pour éviter le warning `No rule files match`.**
+
 ```bash
-sudo mkdir -p /etc/suricata/rules
-sudo cp local.rules /etc/suricata/rules/local.rules
+sudo mkdir -p /var/lib/suricata/rules
+sudo cp local.rules /var/lib/suricata/rules/local.rules
+```
+
+Vérifier que le fichier est bien en place :
+
+```bash
+ls -la /var/lib/suricata/rules/local.rules
 ```
 
 ### 2.5 Ajouter local.rules à la configuration
@@ -118,13 +126,55 @@ rule-files:
   - local.rules          # ← ajouter cette ligne
 ```
 
-### 2.6 Mettre à jour les règles Suricata
+> Si la section `default-rule-path` est présente dans `suricata.yaml`, vérifier qu'elle pointe bien vers `/var/lib/suricata/rules` :
+>
+> ```yaml
+> default-rule-path: /var/lib/suricata/rules
+> ```
+
+### 2.6 Ajouter les règles ICMP / Ping dans local.rules
+
+Ouvrir le fichier de règles :
+
+```bash
+sudo nano /var/lib/suricata/rules/local.rules
+```
+
+Ajouter les règles suivantes à la fin du fichier :
+
+```
+# ════════════════════════════════════════════════════════════════
+#  RÈGLES ICMP / PING — 12ak_H4ck
+# ════════════════════════════════════════════════════════════════
+
+# ── PING ICMP ECHO REQUEST (détection simple, silencieux) ───────
+alert icmp any any -> $HOME_NET any (msg:"PING ICMP - Echo request détecté"; itype:8; icode:0; classtype:misc-activity; sid:3400300; priority:3; rev:1;)
+
+# ── PING ICMP ECHO REPLY ────────────────────────────────────────
+alert icmp any any -> any any (msg:"PING ICMP - Echo reply"; itype:0; icode:0; classtype:misc-activity; sid:3400301; priority:3; rev:1;)
+
+# ── ICMP FLOOD (volume élevé — DDoS) ────────────────────────────
+alert icmp any any -> any any (msg:"ICMP FLOOD DDOS detecte"; itype:8; threshold:type threshold, track by_src, count 50, seconds 5; classtype:attempted-dos; sid:3400302; priority:1; rev:1;)
+
+# ── ICMP OVERSIZED (ping of death) ──────────────────────────────
+alert icmp any any -> any any (msg:"ICMP OVERSIZED - Ping of Death potentiel"; dsize:>1000; classtype:attempted-dos; sid:3400303; priority:1; rev:1;)
+
+# ── NMAP PING SWEEP (-sP / -sn) ─────────────────────────────────
+alert icmp any any -> $HOME_NET any (msg:"NMAP PING SWEEP - Scan réseau ICMP"; itype:8; threshold:type threshold, track by_src, count 5, seconds 2; classtype:attempted-recon; sid:3400304; priority:2; rev:1;)
+
+# ── TRACEROUTE (TTL expired) ─────────────────────────────────────
+alert icmp any any -> any any (msg:"TRACEROUTE ICMP - Sondage réseau détecté"; itype:11; icode:0; threshold:type threshold, track by_src, count 3, seconds 10; classtype:attempted-recon; sid:3400305; priority:2; rev:1;)
+```
+
+Sauvegarder et quitter (`Ctrl+X`, `Y`, `Entrée`).
+
+### 2.7 Mettre à jour les règles Suricata
 
 ```bash
 sudo suricata-update
 ```
 
-### 2.7 Tester la configuration
+### 2.8 Tester la configuration
 
 ```bash
 sudo suricata -T -c /etc/suricata/suricata.yaml -i eth0
@@ -724,7 +774,7 @@ sudo cat /var/log/suricata_blocked.log
 | Fichier | Rôle |
 |---|---|
 | `/etc/suricata/suricata.yaml` | Configuration principale Suricata |
-| `/etc/suricata/rules/local.rules` | Règles de détection personnalisées |
+| `/var/lib/suricata/rules/local.rules` | Règles de détection personnalisées (chemin par défaut Suricata 7+/8.x) |
 | `/var/log/suricata/fast.log` | Log des alertes Suricata (surveillé par le guard) |
 | `/var/log/suricata_guard.log` | Log du script Python |
 | `/var/log/suricata_blocked.log` | Log des IPs bloquées avec horodatage |
@@ -753,6 +803,10 @@ sudo cat /var/log/suricata_blocked.log
 | Metasploit port 4444 | Suricata | Connexion TCP/UDP port 4444 |
 | SSH Brute-force | iptables + Fail2ban + Suricata | Connexions répétées port 22 |
 | RDP / FTP Brute-force | Suricata | Connexions répétées |
+| Ping / ICMP echo-request | Suricata | Détection simple (silencieux) |
+| Ping Sweep `nmap -sn` | Suricata | 5 ICMP en 2 secondes |
+| Ping of Death | Suricata | Paquet ICMP > 1000 bytes |
+| Traceroute ICMP | Suricata | TTL expired répétés |
 | ICMP Flood | iptables + Suricata | Plus de 10 echo-request/s |
 | SYN Flood | iptables + Suricata | Plus de 50 SYN/s |
 | UDP Flood | iptables + Suricata | Plus de 100 paquets UDP/s |
